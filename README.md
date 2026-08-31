@@ -57,7 +57,7 @@ git rev-parse HEAD
 Get-Date
 ```
 
-The deterministic agent scored Hit Rate@10 `1.0`, MRR `0.712728`, MTTC `1.525`, efficiency `0.9475`, and recommended TechnicalScore `0.903318` on the 200-session public set. The weak BM25 baseline was Hit Rate@10 `0.125`, MRR `0.068034`, and MTTC `9.81`; see `docs/baseline_results.json`.
+The default-off agent scored Hit Rate@10 `1.0`, MRR `0.9675`, MTTC `2.01`, efficiency `0.899`, and recommended TechnicalScore `0.97005` on the 200-session public set. The weak BM25 baseline scored `0.106710`; see `docs/baseline_results.json`. These are public-set results only, not a claim about the unreleased final set.
 
 ## Agent Interface
 
@@ -98,7 +98,22 @@ Only exact `parent_asin` equality produces a hit. Core metrics are also reported
 
 ## Architecture and Runtime Disclosure
 
-The runtime agent is deterministic and uses no LLM, model endpoint, external API, or network access. It has no third-party dependencies, reports zero prompt/completion/total tokens, and has zero model/API cost. It parses the documented customer-message templates, scopes products by normalized category aliases, and builds immutable canonical constraint signatures from all structured features/details plus detected material, color, and price signals. Ranking gives signature agreement priority, then additive normalized phrase/token evidence and deterministic quality tie-breaks. An intent override replaces only the tracked initial preference while preserving unrelated disclosed constraints. State is keyed by `session_id`; malformed turns fall back to the prior state and a valid cached/category response.
+The default runtime is deterministic and uses no model endpoint or network access. It has no third-party dependencies, reports zero prompt/completion/total tokens, and has zero model/API cost. It parses documented message forms, isolates session state, preserves unrelated constraints during intent overrides, and indexes canonical catalog evidence. Ranking orders canonical equality, literal phrase/coverage, optional cached semantic overlap, quality, then stable catalog order. While evidence is sparse it returns one best result plus clarification; after four active constraints or exhaustion it widens to `top_k`.
+
+```text
+message + session state
+          |
+          v
+template parser -> category aliases -> candidate pool
+          |                              |
+          v                              v
+active constraints ---------> deterministic evidence ranking
+                                      |
+optional validated tag cache ---------+  (weakest evidence; no network)
+                                      |
+                                      v
+                    confidence-gated recommendations + clarification
+```
 
 An optional offline semantic-enrichment utility is included in `starter/semantic_enrichment.py`. It is default-off, never called from `Agent.reset()` or `Agent.respond()`, and uses only a minimized catalog projection. Explicit `build` operation requires `GEMINI_API_KEY` and writes a validated content-addressed cache; runtime evaluation remains network-free. The builder is hard-clamped to batches of 8, 10 requests/run, 20 requests/rolling day, 30 seconds between requests, 6,000 prompt characters, 512 output tokens, 20-second timeout, and one counted retry. Provider failures preserve completed cache state and do not affect deterministic behavior. Example (operator-invoked only):
 
@@ -111,11 +126,17 @@ Do not send identifiers, shopper/session data, conversations, evaluator data, cr
 
 Supported environment variables are exactly `GEMINI_API_KEY` (CLI build authentication), `SHOPPING_ENRICHMENT_MODE` (`off` by default or `cached` for validated local tags), and `SHOPPING_ENRICHMENT_CACHE` (optional cache path, default `data/semantic_cache.json`). The generated cache path is git-ignored. No other runtime configuration variables are read.
 
-An independently measured public run took 13.776 seconds on Windows NT 10.0.26200.0, Python 3.12.13, AMD64 Family 25 Model 33, 12 logical processors. The evaluator made 305 total `respond` calls, so the amortized end-to-end wall time was approximately 45 ms per evaluated call, including catalog initialization. This is not an isolated inference-latency measurement and will vary with hardware and filesystem conditions.
+The latest captured public run took `14.156` seconds on Windows 11 and Python 3.12.13, including catalog initialization and the full evaluator. Runtime varies by hardware and filesystem. Generate a fresh commit-bound manifest after the final commit:
+
+```powershell
+python tools/run_evidence.py
+```
+
+Retain the ignored `evidence_manifest.json` and `results.json` with the frozen commit hash. The manifest records aggregate metrics, catalog SHA-256/size, UTC timestamp, platform, Python version, duration, command, commit, and tracked-worktree state; it excludes per-session labels and environment secrets.
 
 ## Limitations and Reflection
 
-The retrieval strategy is intentionally tuned to the released evaluator's documented message templates and lexical catalog evidence. Category wording or constraint paraphrases that share little text with catalog metadata can reduce ranking quality, and the anonymized profile is not currently used for learned personalization. The implementation also does not claim any performance on the unreleased final set. With more time, we would add an offline semantic index and broader template/paraphrase tests, while preserving the deterministic fallback and catalog-validity checks.
+The retrieval strategy intentionally uses the released evaluator's documented message forms and benefits from catalog lexical overlap. Unseen paraphrases, sparse metadata, and the heuristic four-constraint confidence threshold can reduce quality; the anonymized profile is not used for learned personalization. Cached Gemini tags are optional, unbenchmarked semantic tie-breakers—not a hidden-set claim—and unpaid-provider data handling may change. The implementation does not claim performance on the unreleased final set.
 
 Repository contributions are attributed by role: implementation covers the agent and tests; evaluation covers benchmark execution and metric verification; documentation covers reproducibility and submission disclosures. The Devpost roster is authoritative for individual names, team membership, and administrative attribution.
 
@@ -131,6 +152,9 @@ docs/baseline_results.json        reproducible weak-starter reference score
 starter/agent.py                  deterministic conversational agent
 evaluator/local_evaluator.py      public-set simulator and scorer
 docs/submission_report.md         method, evidence, and limitations report
+docs/demo_script.md               three-minute multi-turn demonstration plan
+docs/final_submission_checklist.md repository and external freeze checklist
+tools/run_evidence.py             sanitized reproducibility manifest runner
 ```
 
 ## Judging and Submission Policy
@@ -138,6 +162,8 @@ docs/submission_report.md         method, evidence, and limitations report
 - [Participant submission requirements](docs/submission_rules.md)
 - [Final evaluation FAQ](docs/final_evaluation_faq.md)
 - [Submission report](docs/submission_report.md)
+- [Demo script](docs/demo_script.md)
+- [Final submission checklist](docs/final_submission_checklist.md)
 
 ## Data Source
 

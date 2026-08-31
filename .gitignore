@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .env
 results.json
+evidence_manifest.json
 data/catalog.jsonl
 data/semantic_cache.json
 data/semantic_cache.json.lock
