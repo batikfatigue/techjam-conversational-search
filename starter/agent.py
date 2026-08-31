@@ -311,6 +311,13 @@ class Agent:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
+    @staticmethod
+    def _recommendation_limit(state: SessionState, top_k: int) -> int:
+        limit = max(0, int(top_k))
+        if not state.exhausted and len(state.constraints) < 4:
+            return min(1, limit)
+        return limit
+
     def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
         if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
@@ -342,6 +349,7 @@ class Agent:
                 state.exhausted = True
             pool = self._resolve_category(state.category, self._category_buckets)
             recommendations = self._rank(pool or self._global_quality, state.constraints, top_k)
+            recommendations = recommendations[: self._recommendation_limit(state, top_k)]
             ask_attribute = None if state.exhausted else "other"
             message = (
                 "Here are the closest matches I found."

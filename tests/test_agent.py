@@ -117,9 +117,30 @@ class AgentTest(unittest.TestCase):
         result = self.agent.respond(
             "s", "I'm looking for Shirts T-Shirts. A key requirement is: blue cotton.", 1, 2
         )
-        self.assertEqual([item["parent_asin"] for item in result["recommendations"]], ["A", "B"])
+        self.assertEqual([item["parent_asin"] for item in result["recommendations"]], ["A"])
         self.assertEqual(result["ask_attribute"], "other")
         self.assertNotIn("C", [item["parent_asin"] for item in result["recommendations"]])
+
+    def test_confidence_gated_breadth_widens_at_four_constraints_or_exhaustion(self) -> None:
+        self.agent.reset("breadth", {})
+        sparse = self.agent.respond(
+            "breadth", "I'm looking for Shirts T-Shirts. A key requirement is: blue cotton.", 1, 2
+        )
+        self.assertEqual(len(sparse["recommendations"]), 1)
+        self.agent.respond("breadth", "For that, what matters is: soft; imported.", 2, 2)
+        sufficient = self.agent.respond("breadth", "For that, what matters is: machine wash.", 3, 2)
+        self.assertEqual(len(sufficient["recommendations"]), 2)
+
+        self.agent.reset("exhausted", {})
+        exhausted = self.agent.respond(
+            "exhausted", "I'm looking for Shirts T-Shirts. but I'm still exploring.", 1, 2
+        )
+        self.assertEqual(len(exhausted["recommendations"]), 1)
+        widened = self.agent.respond(
+            "exhausted", "I don't have an additional preference for other.", 2, 2
+        )
+        self.assertEqual(len(widened["recommendations"]), 2)
+        self.assertEqual(self.agent.respond("exhausted", "anything", 3, 0)["recommendations"], [])
 
     def test_sessions_override_and_exhaustion_are_isolated(self) -> None:
         self.agent.reset("first", {})
@@ -200,7 +221,8 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(deferred["ask_attribute"], "other")
         self.assertEqual(exhausted["ask_attribute"], None)
         self.assertEqual(deferred["recommendations"], initial["recommendations"])
-        self.assertEqual(exhausted["recommendations"], initial["recommendations"])
+        self.assertEqual(exhausted["recommendations"][0], initial["recommendations"][0])
+        self.assertEqual(len(exhausted["recommendations"]), 2)
 
 
 if __name__ == "__main__":
