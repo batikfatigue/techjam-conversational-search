@@ -93,6 +93,7 @@ class SessionState:
     category: str | None = None
     constraints: list[str] | None = None
     exhausted: bool = False
+    replaceable_preference: str | None = None
 
     def __post_init__(self) -> None:
         if self.constraints is None:
@@ -220,30 +221,32 @@ class Agent:
         return result
 
     @staticmethod
-    def _parse(message: str) -> tuple[str | None, list[str] | None, bool, bool]:
-        """Return category, new constraints, exhaustion, and override flags."""
+    def _parse(message: str) -> tuple[str | None, list[str] | None, bool, bool, str | None]:
+        """Return category, constraints, exhaustion, override, and provenance."""
         text = str(message or "")
         match = _BUYING_RE.match(text)
         if match:
-            return _clean_signal(match.group(1)), [_clean_signal(match.group(2))], False, False
+            return _clean_signal(match.group(1)), [_clean_signal(match.group(2))], False, False, None
         match = _BROWSING_RE.match(text)
         if match:
-            return _clean_signal(match.group(1)), [], False, False
+            return _clean_signal(match.group(1)), [], False, False, None
         match = _INTENT_RE.match(text)
         if match:
-            return _clean_signal(match.group(1)), [_clean_signal(match.group(2))], False, False
+            preference = _clean_signal(match.group(2))
+            return _clean_signal(match.group(1)), [preference], False, False, preference
         match = _OVERRIDE_RE.match(text)
         if match:
-            return None, [_clean_signal(match.group(1))], False, True
+            preference = _clean_signal(match.group(1))
+            return None, [preference], False, True, preference
         match = _DISCLOSURE_RE.match(text)
         if match:
             constraints = [_clean_signal(value) for value in match.group(1).split(";")]
-            return None, [value for value in constraints if value], False, False
+            return None, [value for value in constraints if value], False, False, None
         if _NO_PREFERENCE_RE.match(text) and not _REPAIR_RE.search(text):
             if _JUDGMENT_RE.search(text):
-                return None, None, False, False
-            return None, [], True, False
-        return None, None, False, False
+                return None, None, False, False, None
+            return None, [], True, False, None
+        return None, None, False, False, None
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         if not isinstance(session_id, str) or not session_id:
@@ -278,14 +281,28 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
         try:
-            category, constraints, exhausted, override = self._parse(user_message)
+            category, constraints, exhausted, override, provenance = self._parse(user_message)
             if category:
                 state.category = category
             if override:
-                state.constraints = list(constraints or [])
+                if state.replaceable_preference is not None:
+                    try:
+                        state.constraints.remove(state.replaceable_preference)
+                    except ValueError:
+                        pass
+                replacement = (constraints or [None])[0]
+                if replacement and replacement not in state.constraints:
+                    state.constraints.append(replacement)
+                    state.replaceable_preference = provenance
+                else:
+                    # An existing occurrence belongs to unrelated evidence;
+                    # never make a later override remove it accidentally.
+                    state.replaceable_preference = None
                 state.exhausted = False
             elif constraints is not None:
                 state.constraints.extend(value for value in constraints if value)
+                if provenance is not None:
+                    state.replaceable_preference = provenance
             if exhausted:
                 state.exhausted = True
             pool = self._resolve_category(state.category, self._category_buckets)

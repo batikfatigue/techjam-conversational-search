@@ -54,23 +54,28 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(normalize(" Color: Blue!  "), "color blue")
         self.assertEqual(
             self.agent._parse("I'm looking for Shirts T-Shirts. A key requirement is: blue cotton."),
-            ("Shirts T-Shirts", ["blue cotton"], False, False),
+            ("Shirts T-Shirts", ["blue cotton"], False, False, None),
         )
         self.assertEqual(
             self.agent._parse("For that, what matters is: blue; soft cotton."),
-            (None, ["blue", "soft cotton"], False, False),
+            (None, ["blue", "soft cotton"], False, False, None),
         )
         self.assertEqual(
             self.agent._parse("Actually, ignore my earlier preference. What I need is: leather."),
-            (None, ["leather"], False, True),
+            (None, ["leather"], False, True, "leather"),
         )
         self.assertEqual(
             self.agent._parse("I don't have a preference for other; please use your judgment."),
-            (None, None, False, False),
+            (None, None, False, False, None),
         )
         self.assertEqual(
             self.agent._parse("I don't have an additional preference for other."),
-            (None, [], True, False),
+            (None, [], True, False, None),
+        )
+
+        self.assertEqual(
+            self.agent._parse("I'm looking for a jacket. a loose fit"),
+            ("a jacket", ["a loose fit"], False, False, "a loose fit"),
         )
 
     def test_category_evidence_and_quality_tie_break(self) -> None:
@@ -85,7 +90,7 @@ class AgentTest(unittest.TestCase):
     def test_sessions_override_and_exhaustion_are_isolated(self) -> None:
         self.agent.reset("first", {})
         self.agent.reset("second", {})
-        self.agent.respond("first", "I'm looking for Shirts T-Shirts. A key requirement is: cotton.", 1, 1)
+        self.agent.respond("first", "I'm looking for Shirts T-Shirts. cotton", 1, 1)
         self.agent.respond("second", "I'm looking for Loafers & Slip-Ons, but I'm still exploring.", 1, 1)
         overridden = self.agent.respond(
             "first", "Actually, ignore my earlier preference. What I need is: blue.", 2, 1
@@ -108,6 +113,44 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(result["recommendations"][0]["parent_asin"], "B")
         self.assertIsInstance(result["message"], str)
         self.assertEqual(result["ask_attribute"], "other")
+
+    def test_override_preserves_unrelated_constraints_and_repeats_without_duplicates(self) -> None:
+        self.agent.reset("override", {})
+        self.agent.respond("override", "I'm looking for Shirts T-Shirts. Pull On closure", 1, 2)
+        self.agent.respond("override", "For that, what matters is: cotton; imported.", 2, 2)
+        response = self.agent.respond(
+            "override", "Actually, ignore my earlier preference. What I need is: leather.", 3, 2
+        )
+        state = self.agent._sessions["override"]
+        self.assertEqual(state.constraints, ["cotton", "imported", "leather"])
+        self.assertEqual(state.replaceable_preference, "leather")
+        self.assertNotIn("Pull On closure", state.constraints)
+        self.assertIsInstance(response["recommendations"], list)
+        self.agent.respond(
+            "override", "Actually, ignore my earlier preference. What I need is: nylon.", 4, 2
+        )
+        self.assertEqual(self.agent._sessions["override"].constraints, ["cotton", "imported", "nylon"])
+        self.agent.respond(
+            "override", "Actually, ignore my earlier preference. What I need is: cotton.", 5, 2
+        )
+        self.assertEqual(self.agent._sessions["override"].constraints, ["cotton", "imported"])
+        self.assertIsNone(self.agent._sessions["override"].replaceable_preference)
+        self.agent.respond(
+            "override", "Actually, ignore my earlier preference. What I need is: wool.", 6, 2
+        )
+        self.assertEqual(self.agent._sessions["override"].constraints, ["cotton", "imported", "wool"])
+        self.assertEqual(self.agent._sessions["override"].replaceable_preference, "wool")
+
+    def test_override_without_prior_preference_adds_once(self) -> None:
+        self.agent.reset("no-prior", {})
+        self.agent.respond("no-prior", "I'm looking for Shirts T-Shirts, but I'm still exploring.", 1, 1)
+        self.agent.respond(
+            "no-prior", "Actually, ignore my earlier preference. What I need is: cotton.", 2, 1
+        )
+        self.agent.respond(
+            "no-prior", "Actually, ignore my earlier preference. What I need is: cotton.", 3, 1
+        )
+        self.assertEqual(self.agent._sessions["no-prior"].constraints, ["cotton"])
 
     def test_boundary_deferral_keeps_clarification_without_changing_recommendations(self) -> None:
         self.agent.reset("boundary", {})
