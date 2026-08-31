@@ -6,7 +6,7 @@ This submission implements the Track 4 conversational shopping agent. It asks an
 
 - A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
 - 200 labeled public sessions for local development.
-- A weak BM25 starter agent and deterministic local evaluator.
+- A deterministic conversational agent and local evaluator.
 - The Agent API contract and scoring rules.
 
 The organizer keeps 800 additional sessions unreleased until the Devpost submission deadline. After the deadline, the final evaluation package will be released and teams will run the unmodified official evaluator in their own environments using their frozen submitted commit.
@@ -57,7 +57,7 @@ git rev-parse HEAD
 Get-Date
 ```
 
-The deterministic agent scored Hit Rate@10 `0.99`, MRR `0.669804`, MTTC `1.625`, and recommended TechnicalScore `0.883441` on the 200-session public set. The weak BM25 baseline was Hit Rate@10 `0.125`, MRR `0.068034`, and MTTC `9.81`; see `docs/baseline_results.json`.
+The deterministic agent scored Hit Rate@10 `1.0`, MRR `0.712728`, MTTC `1.525`, efficiency `0.9475`, and recommended TechnicalScore `0.903318` on the 200-session public set. The weak BM25 baseline was Hit Rate@10 `0.125`, MRR `0.068034`, and MTTC `9.81`; see `docs/baseline_results.json`.
 
 ## Agent Interface
 
@@ -98,9 +98,9 @@ Only exact `parent_asin` equality produces a hit. Core metrics are also reported
 
 ## Architecture and Runtime Disclosure
 
-The runtime agent is deterministic and uses no LLM, model endpoint, external API, or network access. It has no third-party dependencies, reports zero prompt/completion/total tokens, and has zero model/API cost. It parses the documented customer-message templates, scopes products by normalized category aliases, ranks with additive normalized phrase and token evidence, uses rating/popularity only as a deterministic tie-break, and replaces constraints on intent override. State is keyed by `session_id`; malformed turns fall back to the prior state and a valid cached/category response.
+The runtime agent is deterministic and uses no LLM, model endpoint, external API, or network access. It has no third-party dependencies, reports zero prompt/completion/total tokens, and has zero model/API cost. It parses the documented customer-message templates, scopes products by normalized category aliases, and builds immutable canonical constraint signatures from all structured features/details plus detected material, color, and price signals. Ranking gives signature agreement priority, then additive normalized phrase/token evidence and deterministic quality tie-breaks. An intent override replaces only the tracked initial preference while preserving unrelated disclosed constraints. State is keyed by `session_id`; malformed turns fall back to the prior state and a valid cached/category response.
 
-The measured public run took 7.19 seconds on Windows NT 10.0.26200.0, Python 3.12.13, AMD64 Family 25 Model 33, 12 logical processors. The evaluator made 325 total `respond` calls, so the amortized end-to-end wall time was approximately 22 ms per evaluated call. This is not an isolated inference-latency measurement and will vary with hardware and filesystem conditions.
+An independently measured public run took 13.776 seconds on Windows NT 10.0.26200.0, Python 3.12.13, AMD64 Family 25 Model 33, 12 logical processors. The evaluator made 305 total `respond` calls, so the amortized end-to-end wall time was approximately 45 ms per evaluated call, including catalog initialization. This is not an isolated inference-latency measurement and will vary with hardware and filesystem conditions.
 
 ## Limitations and Reflection
 

@@ -2,7 +2,7 @@
 
 ## Solution
 
-The agent is a deterministic, standard-library-only conversational catalog retriever. It parses the evaluator's customer-facing message forms into a coarse category and constraint phrases, keeps state per `session_id`, and applies intent overrides by replacing the active constraints. Products are indexed locally from the frozen catalog. Category aliases form the initial candidate pool; additive normalized phrase and token evidence rank candidates without hard-filtering away a product whose wording differs. Rating count, rating, and stable catalog order provide deterministic tie-breaking. Every response returns catalog-valid, deduplicated recommendations and an open clarification while information may remain.
+The agent is a deterministic, standard-library-only conversational catalog retriever. It parses the evaluator's customer-facing message forms into a coarse category and constraint phrases, keeps state per `session_id`, and applies intent overrides by replacing only the tracked initial preference while preserving unrelated disclosed constraints. Products are indexed locally from the frozen catalog. Each product receives an immutable canonical signature containing all normalized feature entries, all detail `key: value` entries, the first detected material and color signals, and a price-derived budget signal. Category aliases form the initial candidate pool; signature agreement is ranked before additive normalized phrase/token evidence, with rating count, rating, and stable catalog order as deterministic tie-breakers. Every response returns catalog-valid, deduplicated recommendations and an open clarification while information may remain.
 
 This design deliberately has no runtime LLM, API, network, or external dependency. It reports zero prompt, completion, and total tokens and incurs zero model/API cost. Unexpected parsing or ranking failures degrade to a deterministic category/global-quality response.
 
@@ -13,11 +13,11 @@ The unmodified local evaluator produced the following final public-set measureme
 | Metric | Overall | Boundary | Browsing | Buying | Intent Override |
 |---|---:|---:|---:|---:|---:|
 | Sample count | 200 | 10 | 80 | 80 | 30 |
-| Hit Rate@10 | 0.990000 | 1.000000 | 1.000000 | 1.000000 | 0.933333 |
-| MRR | 0.669804 | 0.601944 | 0.611111 | 0.705327 | 0.754206 |
-| MTTC | 1.625000 | 1.500000 | 1.212500 | 1.112500 | 4.133333 |
+| Hit Rate@10 | 1.000000 | 1.000000 | 1.000000 | 1.000000 | 1.000000 |
+| MRR | 0.712728 | 0.601944 | 0.640799 | 0.723695 | 0.912222 |
+| MTTC | 1.525000 | 1.500000 | 1.212500 | 1.062500 | 3.600000 |
 
-Overall efficiency was `0.9375` and recommended TechnicalScore was `0.883441`. Reported prompt, completion, and total tokens were all zero. These are public-set measurements only; no hidden-set performance is claimed.
+Overall efficiency was `0.9475` and recommended TechnicalScore was `0.903318`. Reported prompt, completion, and total tokens were all zero. These are public-set measurements only; no hidden-set performance is claimed.
 
 ## Reproduction and Runtime
 
@@ -29,7 +29,7 @@ python -m compileall starter evaluator tests
 python -m evaluator.local_evaluator
 ```
 
-The measured evaluator wall time was 7.19 seconds on Windows NT 10.0.26200.0, Python 3.12.13, AMD64 Family 25 Model 33, with 12 logical processors. There were 325 total evaluated `respond` calls, giving approximately 22 ms amortized end-to-end wall time per call. This is not an isolated inference-latency benchmark and is environment-dependent. The generated `results.json`, commit hash, timestamp, and environment details should be retained together as run evidence; generated output is intentionally ignored by git.
+An independent measured evaluator run took 13.776 seconds on Windows NT 10.0.26200.0, Python 3.12.13, AMD64 Family 25 Model 33, with 12 logical processors. There were 305 total evaluated `respond` calls, giving approximately 45 ms amortized end-to-end wall time per call including initialization. This is not an isolated inference-latency benchmark and is environment-dependent. The generated `results.json`, commit hash, timestamp, and environment details should be retained together as run evidence; generated output is intentionally ignored by git.
 
 ## Limitations
 
