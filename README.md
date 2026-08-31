@@ -100,6 +100,17 @@ Only exact `parent_asin` equality produces a hit. Core metrics are also reported
 
 The runtime agent is deterministic and uses no LLM, model endpoint, external API, or network access. It has no third-party dependencies, reports zero prompt/completion/total tokens, and has zero model/API cost. It parses the documented customer-message templates, scopes products by normalized category aliases, and builds immutable canonical constraint signatures from all structured features/details plus detected material, color, and price signals. Ranking gives signature agreement priority, then additive normalized phrase/token evidence and deterministic quality tie-breaks. An intent override replaces only the tracked initial preference while preserving unrelated disclosed constraints. State is keyed by `session_id`; malformed turns fall back to the prior state and a valid cached/category response.
 
+An optional offline semantic-enrichment utility is included in `starter/semantic_enrichment.py`. It is default-off, never called from `Agent.reset()` or `Agent.respond()`, and uses only a minimized catalog projection. Explicit `build` operation requires `GEMINI_API_KEY` and writes a validated content-addressed cache; runtime evaluation remains network-free. The builder is hard-clamped to batches of 8, 10 requests/run, 20 requests/rolling day, 30 seconds between requests, 6,000 prompt characters, 512 output tokens, 20-second timeout, and one counted retry. Provider failures preserve completed cache state and do not affect deterministic behavior. Example (operator-invoked only):
+
+```powershell
+$env:GEMINI_API_KEY = "..."
+python -m starter.semantic_enrichment --catalog data/catalog.jsonl --cache data/semantic_cache.json
+```
+
+Do not send identifiers, shopper/session data, conversations, evaluator data, credentials, or raw responses to the provider. Free-tier prompts may be retained or reviewed by the provider; use a dedicated unbilled project and review provider terms before building a cache.
+
+Supported environment variables are exactly `GEMINI_API_KEY` (CLI build authentication), `SHOPPING_ENRICHMENT_MODE` (`off` by default or `cached` for validated local tags), and `SHOPPING_ENRICHMENT_CACHE` (optional cache path, default `data/semantic_cache.json`). The generated cache path is git-ignored. No other runtime configuration variables are read.
+
 An independently measured public run took 13.776 seconds on Windows NT 10.0.26200.0, Python 3.12.13, AMD64 Family 25 Model 33, 12 logical processors. The evaluator made 305 total `respond` calls, so the amortized end-to-end wall time was approximately 45 ms per evaluated call, including catalog initialization. This is not an isolated inference-latency measurement and will vary with hardware and filesystem conditions.
 
 ## Limitations and Reflection

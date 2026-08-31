@@ -84,6 +84,19 @@ class AgentTest(unittest.TestCase):
             "signature", "unknown text", 2, 2
         ))
 
+    def test_semantic_evidence_only_breaks_full_deterministic_ties(self) -> None:
+        pool = (self.agent._by_id["A"], self.agent._by_id["B"])
+        baseline = self.agent._rank(pool, ["novel"], 2)
+        semantic = self.agent._rank(pool, ["novel"], 2, {"A": frozenset({"novel"})})
+        self.assertEqual([item["parent_asin"] for item in baseline], ["B", "A"])
+        self.assertEqual([item["parent_asin"] for item in semantic], ["A", "B"])
+
+        literal_wins = self.agent._rank(pool, ["polyester"], 2, {"A": frozenset({"polyester"})})
+        canonical_wins = self.agent._rank(pool, ["blue cotton"], 2, {"B": frozenset({"blue cotton"})})
+        self.assertEqual(literal_wins[0]["parent_asin"], "B")
+        self.assertEqual(canonical_wins[0]["parent_asin"], "A")
+        self.assertEqual({item["parent_asin"] for item in semantic}, {"A", "B"})
+
     def test_normalization_and_documented_parsers(self) -> None:
         self.assertEqual(normalize(" Color: Blue!  "), "color blue")
         self.assertEqual(

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Mapping
+import os
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -142,7 +143,9 @@ class Agent:
         self._category_buckets: Mapping[str, tuple[Product, ...]]
         self._category_terms: Mapping[str, frozenset[str]]
         self._global_quality: tuple[Product, ...] = ()
+        self._semantic_tags: Mapping[str, frozenset[str]] = MappingProxyType({})
         self._build_index()
+        self._load_cached_semantics()
 
     @staticmethod
     def _quality_key(product: Product) -> tuple[float, float, int]:
@@ -150,12 +153,14 @@ class Agent:
 
     def _build_index(self) -> None:
         products: list[Product] = []
+        raw_by_id: dict[str, dict] = {}
         aliases: dict[str, list[Product]] = {}
         with self.catalog_path.open(encoding="utf-8") as handle:
             for order, line in enumerate(handle):
                 if not line.strip():
                     continue
                 raw = json.loads(line)
+                raw_by_id[str(raw.get("parent_asin", ""))] = raw
                 raw_categories = _categories(raw.get("categories"))
                 # Match the evaluator's category semantics: a category entry
                 # can itself contain a comma-separated hierarchy component.
@@ -197,6 +202,23 @@ class Agent:
             {alias: frozenset(_terms(alias)) for alias in aliases}
         )
         self._global_quality = tuple(sorted(products, key=self._quality_key))
+        self._raw_by_id = raw_by_id
+
+    def _load_cached_semantics(self) -> None:
+        if os.environ.get("SHOPPING_ENRICHMENT_MODE", "off").lower() != "cached":
+            return
+        path = os.environ.get("SHOPPING_ENRICHMENT_CACHE", "data/semantic_cache.json")
+        try:
+            from .semantic_enrichment import EnrichmentConfig, load_cache, cache_fingerprint, catalog_digest
+            config = EnrichmentConfig(catalog_digest=catalog_digest(self.catalog_path))
+            cached = load_cache(path, self._raw_by_id, config)
+            self._semantic_tags = MappingProxyType({
+                asin: frozenset(tag for values in tags.values() for tag in values)
+                for asin, raw in self._raw_by_id.items()
+                if (tags := cached.get(cache_fingerprint(raw, config)))
+            })
+        except Exception:
+            self._semantic_tags = MappingProxyType({})
 
     def _resolve_category(self, category: str | None, buckets: Mapping[str, tuple[Product, ...]] | None = None) -> tuple[Product, ...]:
         buckets = buckets or self._category_buckets
@@ -222,7 +244,7 @@ class Agent:
         return buckets.get(best_alias, ()) if best_overlap else ()
 
     @staticmethod
-    def _rank(pool: Iterable[Product], constraints: Iterable[str], top_k: int) -> list[dict[str, str]]:
+    def _rank(pool: Iterable[Product], constraints: Iterable[str], top_k: int, semantic_tags: Mapping[str, frozenset[str]] | None = None) -> list[dict[str, str]]:
         phrases = [normalize(value) for value in constraints if normalize(value)]
         phrase_terms = [set(_terms(phrase)) for phrase in phrases]
         scored: list[tuple[tuple[float, ...], Product]] = []
@@ -232,6 +254,7 @@ class Agent:
             signature_matches = 0
             token_hits = 0
             coverage = 0.0
+            semantic_overlap = 0
             for phrase, terms in zip(phrases, phrase_terms):
                 if phrase in product.signature:
                     signature_matches += 1
@@ -240,9 +263,10 @@ class Agent:
                 hits = len(terms.intersection(product_terms)) if terms else 0
                 token_hits += hits
                 coverage += hits / len(terms) if terms else 0
+                semantic_overlap += len(terms.intersection(semantic_tags.get(product.parent_asin, frozenset()))) if semantic_tags else 0
             # Evidence is ordered before quality. Quality only breaks equal
             # evidence ties, and catalog order makes the result reproducible.
-            key = (-signature_matches, -exact_count, -coverage, -token_hits, -product.rating_number, -product.average_rating, product.order)
+            key = (-signature_matches, -exact_count, -coverage, -token_hits, -semantic_overlap, -product.rating_number, -product.average_rating, product.order)
             scored.append((key, product))
         scored = heapq.nsmallest(max(0, int(top_k)), scored, key=lambda item: item[0])
         seen: set[str] = set()
@@ -348,7 +372,7 @@ class Agent:
             if exhausted:
                 state.exhausted = True
             pool = self._resolve_category(state.category, self._category_buckets)
-            recommendations = self._rank(pool or self._global_quality, state.constraints, top_k)
+            recommendations = self._rank(pool or self._global_quality, state.constraints, top_k, self._semantic_tags)
             recommendations = recommendations[: self._recommendation_limit(state, top_k)]
             ask_attribute = None if state.exhausted else "other"
             message = (
