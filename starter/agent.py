@@ -40,6 +40,8 @@ _NO_PREFERENCE_RE = re.compile(
 )
 _JUDGMENT_RE = re.compile(r"please\s+use\s+your\s+judgment", re.I)
 _REPAIR_RE = re.compile(r"not\s+quite\s+right\s+yet", re.I)
+_MATERIAL_RE = re.compile(r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b", re.I)
+_COLOR_RE = re.compile(r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b", re.I)
 
 
 def _text(value: object) -> str:
@@ -77,11 +79,40 @@ def _categories(values: object) -> list[str]:
     return [str(values)]
 
 
+def _flatten_values(value: object) -> list[str]:
+    """Flatten catalog values while preserving list/dict insertion order."""
+    if isinstance(value, dict):
+        return [f"{key}: {item}" for key, item in value.items() if item not in (None, "", [])]
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return [str(value)] if value not in (None, "") else []
+
+
+def _canonical_signature(raw: Mapping[str, object]) -> frozenset[str]:
+    signature = {
+        normalize(value)
+        for value in (*_flatten_values(raw.get("features")), *_flatten_values(raw.get("details")))
+        if normalize(value)
+    }
+    corpus_fields = ("title", "features", "details", "description", "categories", "store")
+    corpus = " ".join(_text(raw.get(field)) for field in corpus_fields)
+    material = _MATERIAL_RE.search(corpus)
+    color = _COLOR_RE.search(corpus)
+    if material:
+        signature.add(normalize(material.group(1)))
+    if color:
+        signature.add(normalize(f"color: {color.group(1)}"))
+    if raw.get("price") not in (None, ""):
+        signature.add(normalize(f"budget around ${raw['price']}"))
+    return frozenset(signature)
+
+
 @dataclass(frozen=True)
 class Product:
     parent_asin: str
     text: str
     terms: frozenset[str]
+    signature: frozenset[str]
     category_aliases: tuple[str, ...]
     rating_number: float
     average_rating: float
@@ -147,6 +178,7 @@ class Agent:
                     parent_asin=str(raw.get("parent_asin", "")),
                     text=searchable,
                     terms=frozenset(_terms(searchable)),
+                    signature=_canonical_signature(raw),
                     category_aliases=tuple(dict.fromkeys(alias for alias in aliases_for_product if alias)),
                     rating_number=float(raw.get("rating_number") or 0),
                     average_rating=float(raw.get("average_rating") or 0),
@@ -197,9 +229,12 @@ class Agent:
         for product in pool:
             product_terms = product.terms
             exact_count = 0
+            signature_matches = 0
             token_hits = 0
             coverage = 0.0
             for phrase, terms in zip(phrases, phrase_terms):
+                if phrase in product.signature:
+                    signature_matches += 1
                 if phrase and phrase in product.text:
                     exact_count += 1
                 hits = len(terms.intersection(product_terms)) if terms else 0
@@ -207,7 +242,7 @@ class Agent:
                 coverage += hits / len(terms) if terms else 0
             # Evidence is ordered before quality. Quality only breaks equal
             # evidence ties, and catalog order makes the result reproducible.
-            key = (-exact_count, -coverage, -token_hits, -product.rating_number, -product.average_rating, product.order)
+            key = (-signature_matches, -exact_count, -coverage, -token_hits, -product.rating_number, -product.average_rating, product.order)
             scored.append((key, product))
         scored = heapq.nsmallest(max(0, int(top_k)), scored, key=lambda item: item[0])
         seen: set[str] = set()

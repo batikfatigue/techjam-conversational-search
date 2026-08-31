@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from starter.agent import Agent, normalize
+from starter.agent import Agent, _canonical_signature, _flatten_values, normalize
 
 
 def catalog_file() -> Path:
@@ -14,14 +14,14 @@ def catalog_file() -> Path:
         {
             "parent_asin": "A",
             "title": "Blue cotton shirt",
-            "features": ["soft cotton fabric"],
+            "features": ["blue cotton", "soft cotton fabric"],
             "categories": ["Clothing, Shoes & Jewelry", "Men", "Clothing", "Shirts", "T-Shirts"],
             "average_rating": 4.0,
             "rating_number": 20,
         },
         {
             "parent_asin": "B",
-            "title": "Blue polyester shirt",
+            "title": "Blue cotton polyester shirt",
             "features": ["durable polyester fabric"],
             "categories": ["Clothing, Shoes & Jewelry", "Men", "Clothing", "Shirts", "T-Shirts"],
             "average_rating": 5.0,
@@ -49,6 +49,40 @@ class AgentTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.path.unlink(missing_ok=True)
+
+    def test_canonical_signature_flattens_all_structured_values(self) -> None:
+        self.assertEqual(_flatten_values(["Blue", "Blue"]), ["Blue", "Blue"])
+        self.assertEqual(_flatten_values({"Material": "Cotton", "Empty": ""}), ["Material: Cotton"])
+        self.assertEqual(_flatten_values("Leather"), ["Leather"])
+        self.assertEqual(_flatten_values(None), [])
+        signature = _canonical_signature({
+            "title": "Blue cotton shirt",
+            "features": ["90% Cotton", "Machine Wash", "90% Cotton"],
+            "details": {"Closure": "Pull On", "Department": "Womens"},
+            "description": ["Soft blue fabric"],
+            "categories": ["Clothing", "Shirts"],
+            "store": "Example",
+            "price": 19.99,
+        })
+        self.assertIsInstance(signature, frozenset)
+        self.assertIn("90 cotton", signature)
+        self.assertIn("closure pull on", signature)
+        self.assertIn("cotton", signature)
+        self.assertIn("color blue", signature)
+        self.assertIn("budget around 19 99", signature)
+
+    def test_signature_evidence_precedes_flattened_and_quality_ties(self) -> None:
+        self.assertIn("blue cotton", self.agent._by_id["A"].signature)
+        self.assertNotIn("blue cotton", self.agent._by_id["B"].signature)
+        self.assertIn("blue cotton", self.agent._by_id["B"].text)
+        self.agent.reset("signature", {})
+        result = self.agent.respond(
+            "signature", "I'm looking for Shirts T-Shirts. blue cotton.", 1, 2
+        )
+        self.assertEqual(result["recommendations"][0]["parent_asin"], "A")
+        self.assertEqual(result, self.agent.respond(
+            "signature", "unknown text", 2, 2
+        ))
 
     def test_normalization_and_documented_parsers(self) -> None:
         self.assertEqual(normalize(" Color: Blue!  "), "color blue")
